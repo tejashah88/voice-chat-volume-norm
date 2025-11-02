@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Simulated Volume Normalizer</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 20px;
+      }
+      label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      input[type="range"],
+      input[type="number"] {
+        width: 150px;
+      }
+      section {
+        margin-top: 20px;
+        border-top: 1px solid #ccc;
+        padding-top: 10px;
+      }
+      #visualizer {
+        margin: 20px 0;
+        padding: 20px;
+        background: #f5f5f5;
+        border-radius: 8px;
+      }
+      #visualizer h2 {
+        margin-top: 0;
+        margin-bottom: 15px;
+      }
+      .meters-container {
+        display: flex;
+        justify-content: space-around;
+        align-items: flex-end;
+        gap: 30px;
+      }
+      .meter {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .meter label {
+        font-weight: bold;
+        font-size: 0.9em;
+        margin-bottom: 0;
+      }
+      .meter-bar-container {
+        width: 40px;
+        height: 200px;
+        background: #ddd;
+        border-radius: 4px;
+        position: relative;
+        overflow: hidden;
+      }
+      .meter-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 0%;
+        background: #2ecc71;
+        transition: height 0.05s ease-out;
+      }
+      .meter-value {
+        font-size: 0.85em;
+        font-family: monospace;
+        color: #555;
+        min-width: 60px;
+        text-align: center;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Simulated Volume Normalizer</h1>
+    <p style="color: #666; margin-bottom: 20px;">
+      Audio louder than maximum volume ceiling is clamped down, first with the dynamics compressor then a hard limit gain.
+      Audio quieter than the volume ceiling should be amplified.
+    </p>
+
+    <audio controls>
+      <source src="media/loud-test.mp3" type="audio/mpeg" />
+      <p>This demo needs a browser supporting the &lt;audio&gt; element.</p>
+    </audio>
+
+    <div id="visualizer">
+      <h2>Audio Levels</h2>
+      <div class="meters-container">
+        <div class="meter">
+          <label>Input</label>
+          <div class="meter-bar-container">
+            <div class="meter-bar" id="inputBar"></div>
+          </div>
+          <span class="meter-value" id="inputValue">-∞ dB</span>
+        </div>
+        <div class="meter">
+          <label>Output</label>
+          <div class="meter-bar-container">
+            <div class="meter-bar" id="outputBar"></div>
+          </div>
+          <span class="meter-value" id="outputValue">-∞ dB</span>
+        </div>
+      </div>
+    </div>
+
+    <section>
+      <h2>Main Control</h2>
+
+      <h3>Volume Ceiling</h3>
+      <label>
+        Maximum Volume (dB)
+        <input id="threshold" type="range" min="-60" max="0" step="1" value="-20" />
+        <span id="thresholdVal">-20</span>
+      </label>
+      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
+        Sets the maximum volume ceiling. Any audio louder than this will be clamped down to this level.
+      </p>
+
+      <div style="margin-top: 10px; padding: 8px; background: #e3f2fd; border-radius: 4px;">
+        <span style="font-size: 0.85em; color: #1565c0;">Volume Reduction: </span>
+        <span id="reductionDisplay" style="font-family: monospace; font-weight: bold; color: #0d47a1;">0%</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Fine-Tune Controls</h2>
+
+      <h3>Limiter Settings</h3>
+      <label>
+        Limiting Ratio
+        <input id="ratio" type="range" min="4" max="20" step="1" value="20" />
+        <span id="ratioVal">20</span>
+      </label>
+      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
+        How hard to clamp loud audio. 20:1 = very hard limiting, lower = softer/more natural.
+      </p>
+
+      <label>
+        Attack (ms)
+        <input id="attack" type="range" min="0.5" max="10" step="0.5" value="3" />
+        <span id="attackVal">3</span>
+      </label>
+      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
+        How fast the limiter reacts. Faster = more aggressive but can sound clicky. 3-5ms is ideal for voice.
+      </p>
+
+      <label>
+        Release (ms)
+        <input id="release" type="range" min="20" max="300" step="10" value="100" />
+        <span id="releaseVal">100</span>
+      </label>
+      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
+        How fast the limiter releases after a loud sound. 80-150ms maintains natural speech rhythm.
+      </p>
+
+    </section>
+
+    <script src="src/audio-processor.js"></script>
+    <script src="src/audio-visualizer.js"></script>
+    <script>
+      const audioElt = document.querySelector("audio");
+
+      // Create audio context and source node
+      let audioCtx = null;
+      let sourceNode = null;
+
+      const processor = new VoiceVolumeNormalizer(-20);
+      const visualizer = new AudioVisualizer(processor);
+
+      // UI elements
+      const ui = {
+        threshold: document.getElementById("threshold"),
+        ratio: document.getElementById("ratio"),
+        attack: document.getElementById("attack"),
+        release: document.getElementById("release"),
+        thresholdVal: document.getElementById("thresholdVal"),
+        ratioVal: document.getElementById("ratioVal"),
+        attackVal: document.getElementById("attackVal"),
+        releaseVal: document.getElementById("releaseVal"),
+        reductionDisplay: document.getElementById("reductionDisplay"),
+        inputBar: document.getElementById("inputBar"),
+        inputValue: document.getElementById("inputValue"),
+        outputBar: document.getElementById("outputBar"),
+        outputValue: document.getElementById("outputValue"),
+      };
+
+      // Set up meter update callback
+      visualizer.onMetersUpdate = (data) => {
+        // Update input meter
+        ui.inputBar.style.height = data.inputPercent + '%';
+        ui.inputValue.textContent = data.inputDb.toFixed(1) + ' dB';
+
+        // Update output meter
+        ui.outputBar.style.height = data.outputPercent + '%';
+        ui.outputValue.textContent = data.outputDb.toFixed(1) + ' dB';
+
+        // Update volume reduction percentage
+        if (data.reductionPercent !== undefined) {
+          ui.reductionDisplay.textContent = data.reductionPercent.toFixed(1) + '%';
+        }
+      };
+
+      // Initialize and enable audio processor when audio starts playing
+      audioElt.addEventListener("play", () => {
+        if (!audioCtx) {
+          audioCtx = new AudioContext();
+          sourceNode = audioCtx.createMediaElementSource(audioElt);
+          processor.initialize(audioCtx);
+          processor.enable(sourceNode, audioCtx.destination);
+          visualizer.start();
+        }
+      });
+
+      // Update ceiling threshold in real time
+      ui.threshold.oninput = () => {
+        processor.updateParameters({ threshold: parseFloat(ui.threshold.value) });
+        ui.thresholdVal.textContent = ui.threshold.value;
+      };
+
+      // Update limiter fine-tune parameters in real time
+      ui.ratio.oninput = () => {
+        processor.updateParameters({ ratio: parseFloat(ui.ratio.value) });
+        ui.ratioVal.textContent = ui.ratio.value;
+      };
+      ui.attack.oninput = () => {
+        processor.updateParameters({ attack: parseFloat(ui.attack.value) });
+        ui.attackVal.textContent = ui.attack.value;
+      };
+      ui.release.oninput = () => {
+        processor.updateParameters({ release: parseFloat(ui.release.value) });
+        ui.releaseVal.textContent = ui.release.value;
+      };
+    </script>
+  </body>
+</html>
