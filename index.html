@@ -3,518 +3,289 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>Simulated Volume Normalizer</title>
-    <style>
-      body {
-        font-family: sans-serif;
-        padding: 20px;
-      }
-      label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      input[type="range"],
-      input[type="number"] {
-        width: 150px;
-      }
-      section {
-        margin-top: 20px;
-        border-top: 1px solid #ccc;
-        padding-top: 10px;
-      }
-      #visualizer {
-        margin: 20px 0;
-        padding: 20px;
-        background: #f5f5f5;
-        border-radius: 8px;
-      }
-      #visualizer h2 {
-        margin-top: 0;
-        margin-bottom: 15px;
-      }
-      .meters-container {
-        display: flex;
-        justify-content: center;
-        align-items: flex-end;
-        gap: 15px;
-        flex-wrap: wrap;
-      }
-      .meter {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        position: relative;
-      }
-      .meter label {
-        font-weight: bold;
-        font-size: 0.8em;
-        margin-bottom: 0;
-        text-align: center;
-        min-width: 70px;
-      }
-      .meter-bar-container {
-        width: 35px;
-        height: 150px;
-        background: #ddd;
-        border-radius: 4px;
-        position: relative;
-        overflow: hidden;
-      }
-      .meter-bar {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 0%;
-        background: #2ecc71;
-        transition: height 0.05s ease-out;
-      }
-      .meter-value {
-        font-size: 0.75em;
-        font-family: 'Courier New', Courier, monospace;
-        color: #555;
-        min-width: 80px;
-        text-align: center;
-        letter-spacing: 0;
-      }
-      .stage-separator {
-        display: flex;
-        align-items: center;
-        font-size: 1.5em;
-        color: #999;
-        margin: 0 5px;
-        padding-bottom: 60px;
-      }
-      .stage-group {
-        display: flex;
-        align-items: flex-end;
-        gap: 10px;
-        padding: 0 10px;
-        background: #fafafa;
-        border-radius: 8px;
-      }
-      .compression-indicator {
-        font-size: 0.7em;
-        font-family: 'Courier New', Courier, monospace;
-        color: #e67e22;
-        font-weight: bold;
-        margin-top: 4px;
-        min-height: 16px;
-      }
-      .toggle-button {
-        padding: 12px 24px;
-        font-size: 1em;
-        font-weight: bold;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        margin: 15px 0;
-      }
-      .toggle-button.enabled {
-        background: #27ae60;
-        color: white;
-      }
-      .toggle-button.enabled:hover {
-        background: #229954;
-      }
-      .toggle-button.disabled {
-        background: #95a5a6;
-        color: white;
-      }
-      .toggle-button.disabled:hover {
-        background: #7f8c8d;
-      }
-    </style>
+    <title>Voice Volume Normalizer - AudioWorklet Hard Limiter</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   </head>
 
   <body>
-    <h1>Simulated Volume Normalizer</h1>
-    <p style="color: #666; margin-bottom: 20px;">
-      Audio louder than maximum volume ceiling is clamped down, first with the dynamics compressor then a hard limit gain.
-      Audio quieter than the volume ceiling should be amplified.
-    </p>
-
-    <audio controls>
-      <source src="media/loud-test.mp3" type="audio/mpeg" />
-      <p>This demo needs a browser supporting the &lt;audio&gt; element.</p>
-    </audio>
-
-    <div id="visualizer">
-      <h2>Multi-Band Processing Pipeline</h2>
-      <div class="meters-container">
-        <!-- Input Stage -->
-        <div class="meter">
-          <label>Input</label>
-          <div class="meter-bar-container">
-            <div class="meter-bar" id="inputBar"></div>
-          </div>
-          <span class="meter-value" id="inputValue">-∞ dB</span>
-        </div>
-
-        <div class="stage-separator">→</div>
-
-        <!-- Frequency Band Split Stage -->
-        <div class="stage-group">
-          <div class="meter">
-            <label>Low<br/>&lt;300Hz</label>
-            <div class="meter-bar-container">
-              <div class="meter-bar" id="lowBandBar"></div>
-            </div>
-            <span class="meter-value" id="lowBandValue">-∞ dB</span>
-          </div>
-
-          <div class="meter">
-            <label>Mid<br/>300-3kHz</label>
-            <div class="meter-bar-container">
-              <div class="meter-bar" id="midBandBar"></div>
-            </div>
-            <span class="meter-value" id="midBandValue">-∞ dB</span>
-            <div class="compression-indicator" id="compressionIndicator"></div>
-          </div>
-
-          <div class="meter">
-            <label>High<br/>&gt;3kHz</label>
-            <div class="meter-bar-container">
-              <div class="meter-bar" id="highBandBar"></div>
-            </div>
-            <span class="meter-value" id="highBandValue">-∞ dB</span>
-          </div>
-        </div>
-
-        <div class="stage-separator">→</div>
-
-        <!-- Mixed Stage -->
-        <div class="meter">
-          <label>Mixed</label>
-          <div class="meter-bar-container">
-            <div class="meter-bar" id="mixedBar"></div>
-          </div>
-          <span class="meter-value" id="mixedValue">-∞ dB</span>
-        </div>
-
-        <div class="stage-separator">→</div>
-
-        <!-- Output Stage -->
-        <div class="meter">
-          <label>Output</label>
-          <div class="meter-bar-container">
-            <div class="meter-bar" id="outputBar"></div>
-          </div>
-          <span class="meter-value" id="outputValue">-∞ dB</span>
-        </div>
-      </div>
-    </div>
-
-    <section>
-      <h2>Main Control</h2>
-
-      <button id="toggleProcessing" class="toggle-button enabled">Processing: ON</button>
-      <p style="margin: 0 0 20px 0; color: #666; font-size: 0.9em;">
-        Toggle to compare processed vs. unprocessed audio (bypass mode).
-      </p>
-
-      <h3>Diagnostic Recording</h3>
-      <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
-        <button id="stopRecording" class="toggle-button disabled" style="padding: 8px 16px;" disabled>Stop & Export CSV</button>
-        <span id="recordingStatus" style="font-size: 0.9em; color: #666;"></span>
-      </div>
-      <p style="margin: 0 0 20px 0; color: #666; font-size: 0.9em;">
-        Recording starts automatically when you play audio. Click "Stop & Export CSV" to download diagnostic data (volume levels, gain values, threshold crossings) for analysis. Data auto-saves when audio ends.
-      </p>
+    <!-- Left Panel with Controls -->
+    <div id="leftPanel">
+      <h2>Controls</h2>
 
       <h3>Volume Ceiling</h3>
       <label>
-        Maximum Volume (dB)
+        <span>Maximum Volume (dB)</span>
         <input id="threshold" type="range" min="-60" max="0" step="1" value="-20" />
-        <span id="thresholdVal">-20</span>
+        <span class="value-display" id="thresholdVal">-20</span>
+        <p class="description">
+          Sets the maximum volume ceiling. Any audio louder than this will be clamped down to this level.
+        </p>
       </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        Sets the maximum volume ceiling. Any audio louder than this will be clamped down to this level.
-      </p>
 
-      <div style="margin-top: 10px; padding: 8px; background: #e3f2fd; border-radius: 4px;">
-        <span style="font-size: 0.85em; color: #1565c0;">Volume Reduction: </span>
-        <span id="reductionDisplay" style="font-family: monospace; font-weight: bold; color: #0d47a1;">0%</span>
+      <h3>Advanced Parameters</h3>
+      <details open>
+        <summary>Fine-Tuning Controls</summary>
+
+        <label>
+          <span>Attack Time (ms)</span>
+          <input id="attackTime" type="range" min="1" max="50" step="1" value="15" />
+          <span class="value-display" id="attackTimeVal">15</span>
+          <p class="description">
+            How quickly gain reduction is applied (faster = more aggressive limiting).
+          </p>
+        </label>
+
+        <label>
+          <span>Release Time (ms)</span>
+          <input id="releaseTime" type="range" min="20" max="500" step="10" value="80" />
+          <span class="value-display" id="releaseTimeVal">80</span>
+          <p class="description">
+            How quickly gain is restored after limiting (slower = smoother, more natural).
+          </p>
+        </label>
+
+        <label>
+          <span>RMS Window (ms)</span>
+          <input id="rmsWindow" type="range" min="1" max="20" step="1" value="5" />
+          <span class="value-display" id="rmsWindowVal">5</span>
+          <p class="description">
+            Level detection window size (smaller = faster response, larger = smoother).
+          </p>
+        </label>
+
+        <button id="resetDefaults" class="toggle-button" style="width: 100%;">
+          Reset to Defaults
+        </button>
+      </details>
+    </div>
+
+    <!-- Main Content -->
+    <div id="mainContent">
+      <h1>Voice Volume Normalizer - AudioWorklet Hard Limiter</h1>
+
+      <audio controls>
+        <source src="media/loud-test.mp3" type="audio/mpeg" />
+        <p>This demo needs a browser supporting the &lt;audio&gt; element.</p>
+      </audio>
+
+      <div style="display: flex; gap: 10px; align-items: center; margin: 20px 0;">
+        <button id="toggleProcessing" class="toggle-button enabled">Processing: ON</button>
+        <button id="exportData" class="toggle-button disabled" disabled>Export CSV</button>
+        <button id="resetChart" class="toggle-button">Reset Chart</button>
+        <span id="statusMessage" style="font-size: 0.9em; color: #666;"></span>
       </div>
-    </section>
 
-    <section>
-      <h2>Fine-Tune Controls</h2>
-
-      <h3>Limiter Settings</h3>
-      <label>
-        Limiting Ratio
-        <input id="ratio" type="range" min="4" max="20" step="1" value="20" />
-        <span id="ratioVal">20</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        How hard to clamp loud audio. 20:1 = very hard limiting, lower = softer/more natural.
-      </p>
-
-      <label>
-        Attack (ms)
-        <input id="attack" type="range" min="0.5" max="10" step="0.5" value="3" />
-        <span id="attackVal">3</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        How fast the limiter reacts. Faster = more aggressive but can sound clicky. 3-5ms is ideal for voice.
-      </p>
-
-      <label>
-        Release (ms)
-        <input id="release" type="range" min="20" max="300" step="10" value="100" />
-        <span id="releaseVal">100</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        How fast the limiter releases after a loud sound. 80-150ms maintains natural speech rhythm.
-      </p>
-
-    </section>
-
-    <section>
-      <h2>Multi-Band Gain Adjustment</h2>
-      <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">
-        Adjust the volume of each frequency band independently. Use this to fine-tune the balance between low, mid, and high frequencies.
-      </p>
-
-      <label>
-        Low Band Gain (&lt;300Hz)
-        <input id="lowBandGain" type="range" min="-12" max="12" step="1" value="0" />
-        <span id="lowBandGainVal">0 dB</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        Adjust low frequencies (rumble, bass). Bypasses compression.
-      </p>
-
-      <label>
-        Mid Band Gain (300Hz - 3kHz)
-        <input id="midBandGain" type="range" min="-12" max="12" step="1" value="0" />
-        <span id="midBandGainVal">0 dB</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        Adjust voice frequencies (after compression and makeup gain).
-      </p>
-
-      <label>
-        High Band Gain (&gt;3kHz)
-        <input id="highBandGain" type="range" min="-12" max="12" step="1" value="0" />
-        <span id="highBandGainVal">0 dB</span>
-      </label>
-      <p style="margin: 0 0 12px 0; color: #666; font-size: 0.9em;">
-        Adjust high frequencies (sibilance, clarity). Bypasses compression.
-      </p>
-    </section>
+      <div id="visualizer">
+        <div class="graph-container">
+          <canvas id="audioChart"></canvas>
+        </div>
+        <div class="stats-container">
+          <div class="stat-box">
+            <div class="stat-label">Input Level</div>
+            <div class="stat-value input" id="inputValue">-∞ dB</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Output Level</div>
+            <div class="stat-value output" id="outputValue">-∞ dB</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Reduction</div>
+            <div class="stat-value reduction" id="reductionDisplay">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script src="src/audio-processor.js"></script>
     <script src="src/audio-visualizer.js"></script>
     <script>
       const audioElt = document.querySelector("audio");
 
-      // Create audio context and source node
       let audioCtx = null;
       let sourceNode = null;
 
       const processor = new VoiceVolumeNormalizer(-20);
-      const visualizer = new AudioVisualizer(processor);
+      const visualizer = new AudioVisualizer(processor, audioElt);
 
-      // Helper function to format dB values consistently (XXX.X dB)
+      let processingEnabled = true; // Track processing state
+      let userThreshold = -20; // Store user's chosen threshold
+
       function formatDb(db) {
         if (db === -Infinity) return '  -∞ dB';
-        // Format as: sign + 3 digits + . + 1 decimal digit
-        // padStart ensures consistent width in monospace font
         return db.toFixed(1).padStart(6) + ' dB';
       }
 
-      // UI elements
       const ui = {
         toggleProcessing: document.getElementById("toggleProcessing"),
-        stopRecording: document.getElementById("stopRecording"),
-        recordingStatus: document.getElementById("recordingStatus"),
+        exportData: document.getElementById("exportData"),
+        statusMessage: document.getElementById("statusMessage"),
         threshold: document.getElementById("threshold"),
-        ratio: document.getElementById("ratio"),
-        attack: document.getElementById("attack"),
-        release: document.getElementById("release"),
         thresholdVal: document.getElementById("thresholdVal"),
-        ratioVal: document.getElementById("ratioVal"),
-        attackVal: document.getElementById("attackVal"),
-        releaseVal: document.getElementById("releaseVal"),
+        attackTime: document.getElementById("attackTime"),
+        attackTimeVal: document.getElementById("attackTimeVal"),
+        releaseTime: document.getElementById("releaseTime"),
+        releaseTimeVal: document.getElementById("releaseTimeVal"),
+        rmsWindow: document.getElementById("rmsWindow"),
+        rmsWindowVal: document.getElementById("rmsWindowVal"),
+        resetDefaults: document.getElementById("resetDefaults"),
+        resetChart: document.getElementById("resetChart"),
         reductionDisplay: document.getElementById("reductionDisplay"),
-        // Meter bars and values (6 stages)
-        inputBar: document.getElementById("inputBar"),
         inputValue: document.getElementById("inputValue"),
-        lowBandBar: document.getElementById("lowBandBar"),
-        lowBandValue: document.getElementById("lowBandValue"),
-        midBandBar: document.getElementById("midBandBar"),
-        midBandValue: document.getElementById("midBandValue"),
-        highBandBar: document.getElementById("highBandBar"),
-        highBandValue: document.getElementById("highBandValue"),
-        mixedBar: document.getElementById("mixedBar"),
-        mixedValue: document.getElementById("mixedValue"),
-        outputBar: document.getElementById("outputBar"),
         outputValue: document.getElementById("outputValue"),
-        compressionIndicator: document.getElementById("compressionIndicator"),
-        // Band gain controls
-        lowBandGain: document.getElementById("lowBandGain"),
-        lowBandGainVal: document.getElementById("lowBandGainVal"),
-        midBandGain: document.getElementById("midBandGain"),
-        midBandGainVal: document.getElementById("midBandGainVal"),
-        highBandGain: document.getElementById("highBandGain"),
-        highBandGainVal: document.getElementById("highBandGainVal"),
       };
 
-      // Set up meter update callback
       visualizer.onMetersUpdate = (data) => {
-        // Update input meter
-        ui.inputBar.style.height = data.inputPercent + '%';
         ui.inputValue.textContent = formatDb(data.inputDb);
-
-        // Update low band meter
-        ui.lowBandBar.style.height = data.lowBandPercent + '%';
-        ui.lowBandValue.textContent = formatDb(data.lowBandDb);
-
-        // Update mid band meter
-        ui.midBandBar.style.height = data.midBandPercent + '%';
-        ui.midBandValue.textContent = formatDb(data.midBandDb);
-
-        // Update high band meter
-        ui.highBandBar.style.height = data.highBandPercent + '%';
-        ui.highBandValue.textContent = formatDb(data.highBandDb);
-
-        // Update mixed meter
-        ui.mixedBar.style.height = data.mixedPercent + '%';
-        ui.mixedValue.textContent = formatDb(data.mixedDb);
-
-        // Update output meter
-        ui.outputBar.style.height = data.outputPercent + '%';
         ui.outputValue.textContent = formatDb(data.outputDb);
 
-        // Update compression indicator
-        if (data.compressionDb !== undefined && data.compressionDb > 0.5) {
-          ui.compressionIndicator.textContent = 'Comp: -' + formatDb(data.compressionDb);
-        } else {
-          ui.compressionIndicator.textContent = '';
-        }
-
-        // Update volume reduction percentage
         if (data.reductionPercent !== undefined) {
           ui.reductionDisplay.textContent = data.reductionPercent.toFixed(1) + '%';
         }
       };
 
-      // Initialize and enable audio processor when audio starts playing
-      audioElt.addEventListener("play", () => {
+      // Update chart duration when audio metadata loads
+      audioElt.addEventListener("loadedmetadata", () => {
+        visualizer.updateAudioDuration();
+      });
+
+      audioElt.addEventListener("play", async () => {
+        // Reset chart when replaying audio
+        if (audioCtx && audioElt.currentTime === 0) {
+          visualizer.resetChart();
+        }
+
         if (!audioCtx) {
-          audioCtx = new AudioContext();
-          sourceNode = audioCtx.createMediaElementSource(audioElt);
-          processor.initialize(audioCtx);
-          processor.enable(sourceNode, audioCtx.destination);
+          try {
+            audioCtx = new AudioContext();
+            sourceNode = audioCtx.createMediaElementSource(audioElt);
+
+            ui.statusMessage.textContent = "⏳ Loading AudioWorklet...";
+            ui.statusMessage.style.color = "#3498db";
+
+            await processor.initialize(audioCtx);
+
+            // Always enable processor (needed for visualizer)
+            processor.enable(sourceNode, audioCtx.destination);
+
+            // Set threshold based on processing state
+            if (!processingEnabled) {
+              processor.updateParameters({ threshold: 0 }); // 0 dB = no limiting
+            }
+
+            // Always start visualizer
+            visualizer.start();
+
+            ui.statusMessage.textContent = "✓ AudioWorklet loaded";
+            ui.statusMessage.style.color = "#27ae60";
+
+            setTimeout(() => {
+              ui.statusMessage.textContent = "";
+            }, 2000);
+          } catch (error) {
+            console.error('[Init] Failed to initialize audio processor:', error);
+            ui.statusMessage.textContent = "❌ AudioWorklet failed to load. Are you running from a web server?";
+            ui.statusMessage.style.color = "#e74c3c";
+            return;
+          }
+        }
+
+        // Restart visualization if it was paused
+        if (processor.isActive && !visualizer.animationId) {
           visualizer.start();
         }
 
-        // Auto-start diagnostic recording
         if (!visualizer.isRecording) {
           visualizer.startRecording();
-          ui.stopRecording.disabled = false;
-          ui.stopRecording.classList.remove("disabled");
-          ui.stopRecording.classList.add("enabled");
-          ui.recordingStatus.textContent = "🔴 Recording...";
-          ui.recordingStatus.style.color = "#e74c3c";
+          ui.exportData.disabled = false;
+          ui.exportData.classList.remove("disabled");
+          ui.exportData.classList.add("enabled");
         }
       });
 
-      // Auto-save diagnostic data when audio ends
+      audioElt.addEventListener("pause", () => {
+        // Pause the visualization loop when audio is paused
+        visualizer.pause();
+      });
+
       audioElt.addEventListener("ended", () => {
-        if (visualizer.isRecording) {
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          visualizer.exportRecordingData(`audio-diagnostics-${timestamp}.csv`);
-          ui.stopRecording.disabled = true;
-          ui.stopRecording.classList.remove("enabled");
-          ui.stopRecording.classList.add("disabled");
-          ui.recordingStatus.textContent = "✓ Auto-saved on audio end";
-          ui.recordingStatus.style.color = "#27ae60";
-          setTimeout(() => {
-            ui.recordingStatus.textContent = "";
-          }, 5000);
-        }
+        // Pause the visualization loop when audio ends (keep data visible)
+        visualizer.pause();
       });
 
-      // Toggle processing on/off
       ui.toggleProcessing.onclick = () => {
-        if (!audioCtx || !sourceNode) {
-          alert("Please start playing audio first!");
-          return;
-        }
-
-        if (processor.isActive) {
-          // Disable processing (bypass mode)
-          processor.disable();
-          visualizer.stop();
+        if (ui.toggleProcessing.classList.contains("enabled")) {
+          // Turn OFF - set threshold to 0 dB (no limiting)
+          processingEnabled = false;
+          processor.updateParameters({ threshold: 0 });
           ui.toggleProcessing.textContent = "Processing: OFF";
           ui.toggleProcessing.classList.remove("enabled");
           ui.toggleProcessing.classList.add("disabled");
         } else {
-          // Enable processing
-          processor.enable(sourceNode, audioCtx.destination);
-          visualizer.start();
+          // Turn ON - restore user's threshold
+          processingEnabled = true;
+          processor.updateParameters({ threshold: userThreshold });
           ui.toggleProcessing.textContent = "Processing: ON";
           ui.toggleProcessing.classList.remove("disabled");
           ui.toggleProcessing.classList.add("enabled");
         }
       };
 
-      // Stop recording and export data
-      ui.stopRecording.onclick = () => {
+      ui.exportData.onclick = () => {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         visualizer.exportRecordingData(`audio-diagnostics-${timestamp}.csv`);
-        ui.stopRecording.disabled = true;
-        ui.stopRecording.classList.remove("enabled");
-        ui.stopRecording.classList.add("disabled");
-        ui.recordingStatus.textContent = "✓ Data exported";
-        ui.recordingStatus.style.color = "#27ae60";
+        ui.statusMessage.textContent = "✓ Data exported";
+        ui.statusMessage.style.color = "#27ae60";
         setTimeout(() => {
-          ui.recordingStatus.textContent = "";
+          ui.statusMessage.textContent = "";
         }, 3000);
       };
 
-      // Update ceiling threshold in real time
       ui.threshold.oninput = () => {
-        processor.updateParameters({ threshold: parseFloat(ui.threshold.value) });
+        userThreshold = parseFloat(ui.threshold.value);
+        if (processingEnabled) {
+          processor.updateParameters({ threshold: userThreshold });
+        }
         ui.thresholdVal.textContent = ui.threshold.value;
       };
 
-      // Update limiter fine-tune parameters in real time
-      ui.ratio.oninput = () => {
-        processor.updateParameters({ ratio: parseFloat(ui.ratio.value) });
-        ui.ratioVal.textContent = ui.ratio.value;
-      };
-      ui.attack.oninput = () => {
-        processor.updateParameters({ attack: parseFloat(ui.attack.value) });
-        ui.attackVal.textContent = ui.attack.value;
-      };
-      ui.release.oninput = () => {
-        processor.updateParameters({ release: parseFloat(ui.release.value) });
-        ui.releaseVal.textContent = ui.release.value;
+      ui.attackTime.oninput = () => {
+        processor.updateParameters({ attackTime: parseFloat(ui.attackTime.value) });
+        ui.attackTimeVal.textContent = ui.attackTime.value;
       };
 
-      // Update band gain parameters in real time
-      ui.lowBandGain.oninput = () => {
-        const gainDb = parseFloat(ui.lowBandGain.value);
-        processor.updateParameters({ lowBandGain: gainDb });
-        ui.lowBandGainVal.textContent = gainDb.toFixed(0) + ' dB';
+      ui.releaseTime.oninput = () => {
+        processor.updateParameters({ releaseTime: parseFloat(ui.releaseTime.value) });
+        ui.releaseTimeVal.textContent = ui.releaseTime.value;
       };
-      ui.midBandGain.oninput = () => {
-        const gainDb = parseFloat(ui.midBandGain.value);
-        processor.updateParameters({ midBandGain: gainDb });
-        ui.midBandGainVal.textContent = gainDb.toFixed(0) + ' dB';
+
+      ui.rmsWindow.oninput = () => {
+        processor.updateParameters({ rmsWindow: parseFloat(ui.rmsWindow.value) });
+        ui.rmsWindowVal.textContent = ui.rmsWindow.value;
       };
-      ui.highBandGain.oninput = () => {
-        const gainDb = parseFloat(ui.highBandGain.value);
-        processor.updateParameters({ highBandGain: gainDb });
-        ui.highBandGainVal.textContent = gainDb.toFixed(0) + ' dB';
+
+      ui.resetDefaults.onclick = () => {
+        ui.threshold.value = -20;
+        ui.thresholdVal.textContent = "-20";
+        ui.attackTime.value = 15;
+        ui.attackTimeVal.textContent = "15";
+        ui.releaseTime.value = 80;
+        ui.releaseTimeVal.textContent = "80";
+        ui.rmsWindow.value = 5;
+        ui.rmsWindowVal.textContent = "5";
+
+        userThreshold = -20;
+
+        processor.updateParameters({
+          threshold: processingEnabled ? -20 : 0,
+          attackTime: 15,
+          releaseTime: 80,
+          rmsWindow: 5
+        });
+      };
+
+      ui.resetChart.onclick = () => {
+        visualizer.resetChart();
       };
     </script>
   </body>

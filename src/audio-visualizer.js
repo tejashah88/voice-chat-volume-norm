@@ -1,69 +1,179 @@
-// Audio processing constants
+/**
+ * Audio visualizer for AudioWorklet-based hard limit processing
+ * Displays input and output levels with diagnostic recording and live Chart.js graphs
+ */
 const ANALYSER_FFT_SIZE = 2048;
 const ANALYSER_SMOOTHING = 0.3;
 
-// Handles real-time visualization of audio levels
 class AudioVisualizer {
-  constructor(processor) {
+  constructor(processor, audioElement = null) {
     this.processor = processor;
+    this.audioElement = audioElement;
     this.animationId = null;
     this.onMetersUpdate = null;
     this.inputAnalyser = null;
-    this.lowBandAnalyser = null;
-    this.midBandAnalyser = null;
-    this.highBandAnalyser = null;
-    this.mixedAnalyser = null; // Will reference processor.mixerAnalyser (after first-stage limiter)
     this.outputAnalyser = null;
 
-    // Diagnostic recording
     this.isRecording = false;
     this.recordingData = [];
     this.recordingStartTime = null;
+
+    // Chart.js instance
+    this.chart = null;
+    this.chartData = {
+      inputData: [],
+      outputData: [],
+      thresholdData: []
+    };
+    this.chartStartTime = 0;
+    this.audioDuration = null;
+
+    // Initialize chart immediately on construction
+    this.initializeChart();
   }
 
-  // Initialize analysers when processor is ready
+  /**
+   * Initialize analysers when processor is ready
+   */
   initialize() {
     if (!this.processor.audioCtx || this.inputAnalyser) return;
 
-    // Create input analyser (taps raw source)
     this.inputAnalyser = new AnalyserNode(this.processor.audioCtx, {
       fftSize: ANALYSER_FFT_SIZE,
       smoothingTimeConstant: ANALYSER_SMOOTHING,
     });
 
-    // Create band analysers (tap each frequency band)
-    this.lowBandAnalyser = new AnalyserNode(this.processor.audioCtx, {
-      fftSize: ANALYSER_FFT_SIZE,
-      smoothingTimeConstant: ANALYSER_SMOOTHING,
-    });
-    this.midBandAnalyser = new AnalyserNode(this.processor.audioCtx, {
-      fftSize: ANALYSER_FFT_SIZE,
-      smoothingTimeConstant: ANALYSER_SMOOTHING,
-    });
-    this.highBandAnalyser = new AnalyserNode(this.processor.audioCtx, {
-      fftSize: ANALYSER_FFT_SIZE,
-      smoothingTimeConstant: ANALYSER_SMOOTHING,
-    });
-
-    // Reuse processor's analyser for mixed signal (already in main chain after first-stage limiter)
-    this.mixedAnalyser = this.processor.mixerAnalyser;
-
-    // Create output analyser (taps final output)
     this.outputAnalyser = new AnalyserNode(this.processor.audioCtx, {
       fftSize: ANALYSER_FFT_SIZE,
       smoothingTimeConstant: ANALYSER_SMOOTHING,
     });
 
-    // Connect analysers in parallel to tap into audio chain (non-invasive)
     this.processor.sourceNode.connect(this.inputAnalyser);
-    this.processor.lowBandGain.connect(this.lowBandAnalyser);
-    this.processor.compressor.connect(this.midBandAnalyser);
-    this.processor.highBandGain.connect(this.highBandAnalyser);
-    // mixedAnalyser already in main chain (processor.mixerAnalyser)
-    this.processor.limiterGain.connect(this.outputAnalyser);
+    this.processor.limiterNode.connect(this.outputAnalyser);
   }
 
-  // Calculate RMS (Root Mean Square) for perceived loudness
+  /**
+   * Initialize Chart.js line chart
+   */
+  initializeChart() {
+    // Don't initialize twice
+    if (this.chart) return;
+
+    const canvas = document.getElementById('audioChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    // Get audio duration if available
+    if (this.audioElement && !isNaN(this.audioElement.duration)) {
+      this.audioDuration = this.audioElement.duration;
+    }
+
+    this.chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Input Level',
+            data: this.chartData.inputData,
+            borderColor: '#3498db',
+            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            pointRadius: 0,
+            fill: true
+          },
+          {
+            label: 'Output Level',
+            data: this.chartData.outputData,
+            borderColor: '#e74c3c',
+            backgroundColor: 'rgba(231, 76, 60, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            pointRadius: 0,
+            fill: true
+          },
+          {
+            label: 'Threshold',
+            data: this.chartData.thresholdData,
+            borderColor: '#95a5a6',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            type: 'linear',
+            display: true,
+            title: {
+              display: true,
+              text: 'Time (s)'
+            },
+            min: 0,
+            max: this.audioDuration || 10,
+            ticks: {
+              maxTicksLimit: 10
+            }
+          },
+          y: {
+            display: true,
+            title: {
+              display: true,
+              text: 'Level (dB)'
+            },
+            min: -60,
+            max: 0,
+            ticks: {
+              stepSize: 10
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top'
+          },
+          tooltip: {
+            enabled: false
+          }
+        },
+        interaction: {
+          intersect: false,
+          mode: 'index'
+        }
+      }
+    });
+  }
+
+  /**
+   * Update chart data with new points
+   */
+  updateChart(inputDb, outputDb) {
+    if (!this.chart) return;
+
+    // Use audio element's current time if available, otherwise use elapsed time
+    const currentTime = this.audioElement && !isNaN(this.audioElement.currentTime)
+      ? this.audioElement.currentTime
+      : (performance.now() - this.chartStartTime) / 1000;
+
+    // Add new data point (using x,y objects for linear scale)
+    this.chartData.inputData.push({ x: currentTime, y: inputDb });
+    this.chartData.outputData.push({ x: currentTime, y: outputDb });
+    this.chartData.thresholdData.push({ x: currentTime, y: this.processor.threshold });
+
+    this.chart.update('none'); // Update without animation for performance
+  }
+
+  /**
+   * Calculate RMS (Root Mean Square) for perceived loudness
+   */
   calculateRMS(dataArray) {
     let sumSquares = 0;
     for (let i = 0; i < dataArray.length; i++) {
@@ -72,167 +182,181 @@ class AudioVisualizer {
     return Math.sqrt(sumSquares / dataArray.length);
   }
 
-  // Convert dB to percentage for bar height
+  /**
+   * Convert dB to percentage for bar height
+   */
   dbToPercent(db, minDb = -60, maxDb = 0) {
     const percent = ((db - minDb) / (maxDb - minDb)) * 100;
     return Math.max(0, Math.min(100, percent));
   }
 
-  // Main visualization loop - reads analysers and updates UI
+  /**
+   * Main visualization loop - reads analysers and updates UI
+   */
   updateMeters() {
     if (!this.inputAnalyser || !this.outputAnalyser || !this.processor.isActive) {
       return;
     }
 
-    // Read all 6 stages
     const inputData = new Float32Array(this.inputAnalyser.fftSize);
-    const lowBandData = new Float32Array(this.lowBandAnalyser.fftSize);
-    const midBandData = new Float32Array(this.midBandAnalyser.fftSize);
-    const highBandData = new Float32Array(this.highBandAnalyser.fftSize);
-    const mixedData = new Float32Array(this.mixedAnalyser.fftSize);
     const outputData = new Float32Array(this.outputAnalyser.fftSize);
 
     this.inputAnalyser.getFloatTimeDomainData(inputData);
-    this.lowBandAnalyser.getFloatTimeDomainData(lowBandData);
-    this.midBandAnalyser.getFloatTimeDomainData(midBandData);
-    this.highBandAnalyser.getFloatTimeDomainData(highBandData);
-    this.mixedAnalyser.getFloatTimeDomainData(mixedData);
     this.outputAnalyser.getFloatTimeDomainData(outputData);
 
-    // Calculate RMS for each stage
     const inputRMS = this.calculateRMS(inputData);
-    const lowBandRMS = this.calculateRMS(lowBandData);
-    const midBandRMS = this.calculateRMS(midBandData);
-    const highBandRMS = this.calculateRMS(highBandData);
-    const mixedRMS = this.calculateRMS(mixedData);
     const outputRMS = this.calculateRMS(outputData);
 
-    // Convert to dB
     const inputDb = 20 * Math.log10(inputRMS || 1e-5);
-    const lowBandDb = 20 * Math.log10(lowBandRMS || 1e-5);
-    const midBandDb = 20 * Math.log10(midBandRMS || 1e-5);
-    const highBandDb = 20 * Math.log10(highBandRMS || 1e-5);
-    const mixedDb = 20 * Math.log10(mixedRMS || 1e-5);
     const outputDb = 20 * Math.log10(outputRMS || 1e-5);
 
-    // Calculate compression amount on mid band
-    // Compare filtered mid-band input to compressed mid-band output
-    // Note: This is an approximation since we're comparing input (full spectrum) to mid-band
-    const compressionDb = Math.max(0, inputDb - midBandDb);
-
-    // Calculate total reduction (input to output)
     const totalReductionDb = inputDb - outputDb;
     const totalReductionPercent = totalReductionDb > 0
       ? (1 - Math.pow(10, -totalReductionDb / 20)) * 100
       : 0;
 
+    // Update chart
+    this.updateChart(inputDb, outputDb);
+
+    // Update stats display
     if (this.onMetersUpdate) {
       this.onMetersUpdate({
         inputDb: inputDb,
         inputPercent: this.dbToPercent(inputDb),
-        lowBandDb: lowBandDb,
-        lowBandPercent: this.dbToPercent(lowBandDb),
-        midBandDb: midBandDb,
-        midBandPercent: this.dbToPercent(midBandDb),
-        highBandDb: highBandDb,
-        highBandPercent: this.dbToPercent(highBandDb),
-        mixedDb: mixedDb,
-        mixedPercent: this.dbToPercent(mixedDb),
         outputDb: outputDb,
         outputPercent: this.dbToPercent(outputDb),
-        compressionDb: compressionDb,
         reductionPercent: Math.max(0, totalReductionPercent),
       });
     }
 
-    // Record diagnostic data if recording is enabled
+    // Recording
     if (this.isRecording && this.recordingStartTime !== null) {
       const timestamp = performance.now() - this.recordingStartTime;
       this.recordingData.push({
         timestamp: timestamp.toFixed(2),
         inputDb: inputDb.toFixed(2),
-        lowBandDb: lowBandDb.toFixed(2),
-        midBandDb: midBandDb.toFixed(2),
-        highBandDb: highBandDb.toFixed(2),
-        mixedDb: mixedDb.toFixed(2),
         outputDb: outputDb.toFixed(2),
-        compressionDb: compressionDb.toFixed(2),
         threshold: this.processor.threshold.toFixed(2),
-        limiterReduction: this.processor.limiterCompressor.reduction.toFixed(2),
-        limiterGain: this.processor.limiterGain.gain.value.toFixed(4),
-        aboveThreshold: mixedDb > this.processor.threshold
+        reductionDb: totalReductionDb.toFixed(2),
+        reductionPercent: totalReductionPercent.toFixed(2),
+        aboveThreshold: inputDb > this.processor.threshold,
       });
     }
 
     this.animationId = requestAnimationFrame(() => this.updateMeters());
   }
 
-  // Reconnect analyser taps (needed after processor.disable() which disconnects everything)
+  /**
+   * Reconnect analyser taps after disable/enable
+   */
   reconnectAnalysers() {
     if (!this.inputAnalyser || !this.processor.isActive) return;
 
-    // Reconnect all analyser taps to the audio chain
-    this.processor.sourceNode.connect(this.inputAnalyser);
-    this.processor.lowBandGain.connect(this.lowBandAnalyser);
-    this.processor.compressor.connect(this.midBandAnalyser);
-    this.processor.highBandGain.connect(this.highBandAnalyser);
-    // mixedAnalyser already in main chain (processor.mixerAnalyser)
-    this.processor.limiterGain.connect(this.outputAnalyser);
+    try {
+      this.processor.sourceNode.connect(this.inputAnalyser);
+      this.processor.limiterNode.connect(this.outputAnalyser);
+    } catch (e) {
+      console.error('[Visualizer] Error reconnecting analysers:', e);
+    }
   }
 
-  // Start visualization loop
+  /**
+   * Start visualization loop
+   */
   start() {
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
     }
+    this.chartStartTime = performance.now();
     this.initialize();
     this.reconnectAnalysers();
     this.updateMeters();
   }
 
-  // Stop visualization loop and reset state
-  stop() {
+  /**
+   * Pause visualization loop without clearing data
+   */
+  pause() {
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
     }
+  }
+
+  /**
+   * Stop visualization loop and reset state
+   */
+  stop() {
+    this.pause();
 
     if (this.onMetersUpdate) {
       this.onMetersUpdate({
         inputDb: -Infinity,
         inputPercent: 0,
-        lowBandDb: -Infinity,
-        lowBandPercent: 0,
-        midBandDb: -Infinity,
-        midBandPercent: 0,
-        highBandDb: -Infinity,
-        highBandPercent: 0,
-        mixedDb: -Infinity,
-        mixedPercent: 0,
         outputDb: -Infinity,
         outputPercent: 0,
-        compressionDb: 0,
         reductionPercent: 0,
       });
     }
+
+    // Clear chart data in place (Chart.js holds references)
+    if (this.chart) {
+      this.chartData.inputData.length = 0;
+      this.chartData.outputData.length = 0;
+      this.chartData.thresholdData.length = 0;
+      this.chart.update();
+    }
   }
 
-  // Start recording diagnostic data
+  /**
+   * Update chart x-axis max when audio duration becomes available
+   */
+  updateAudioDuration() {
+    if (this.audioElement && !isNaN(this.audioElement.duration)) {
+      this.audioDuration = this.audioElement.duration;
+      if (this.chart && this.chart.options.scales.x) {
+        this.chart.options.scales.x.max = this.audioDuration;
+        this.chart.update('none');
+      }
+    }
+  }
+
+  /**
+   * Reset/clear chart data without stopping visualization
+   * Works regardless of whether chart is initialized or audio is playing
+   */
+  resetChart() {
+    // Clear arrays in place (Chart.js holds references to these arrays)
+    this.chartData.inputData.length = 0;
+    this.chartData.outputData.length = 0;
+    this.chartData.thresholdData.length = 0;
+
+    // Update chart if it exists
+    if (this.chart) {
+      this.chart.update();
+    }
+  }
+
+  /**
+   * Start recording diagnostic data
+   */
   startRecording() {
     this.recordingData = [];
     this.recordingStartTime = performance.now();
     this.isRecording = true;
-    console.log('[Diagnostics] Recording started');
   }
 
-  // Stop recording and return the collected data
+  /**
+   * Stop recording and return the collected data
+   */
   stopRecording() {
     this.isRecording = false;
-    console.log('[Diagnostics] Recording stopped. Captured', this.recordingData.length, 'samples');
     return this.recordingData;
   }
 
-  // Export recording data as downloadable CSV file
+  /**
+   * Export recording data as downloadable CSV file
+   */
   exportRecordingData(filename = 'audio-diagnostics.csv') {
     const data = this.stopRecording();
 
@@ -241,15 +365,12 @@ class AudioVisualizer {
       return;
     }
 
-    // Create CSV header from first data entry keys
     const headers = Object.keys(data[0]);
     const csvHeader = headers.join(',');
 
-    // Convert each data entry to CSV row
     const csvRows = data.map(entry => {
       return headers.map(header => {
         const value = entry[header];
-        // Quote strings that contain commas
         if (typeof value === 'string' && value.includes(',')) {
           return `"${value}"`;
         }
@@ -257,10 +378,8 @@ class AudioVisualizer {
       }).join(',');
     });
 
-    // Combine header and rows
     const csvContent = [csvHeader, ...csvRows].join('\n');
 
-    // Create and download CSV file
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -268,6 +387,5 @@ class AudioVisualizer {
     link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
-    console.log('[Diagnostics] Data exported to', filename);
   }
 }
